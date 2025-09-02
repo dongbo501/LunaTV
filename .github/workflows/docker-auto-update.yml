@@ -1,0 +1,60 @@
+name: Docker Auto Update and Build
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天 UTC 时间午夜运行一次
+  workflow_dispatch: # 允许手动触发
+  push:
+    branches:
+      - main # 当有新的提交推送到 main 分支时运行
+
+jobs:
+  update_and_build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取完整的 git 历史记录以便进行差异比较
+
+      - name: Add Upstream Remote
+        run: |
+          git remote add upstream https://github.com/SzeMeng76/LunaTV.git
+          git fetch upstream
+
+      - name: Check for Updates
+        id: git_diff
+        run: |
+          # 检查本地分支和上游分支是否有差异
+          if git diff --quiet HEAD upstream/main; then
+            echo "No changes found. Exiting."
+            echo "::set-output name=has_updates::false"
+          else
+            echo "Updates found! Pulling latest changes..."
+            git pull upstream main --no-edit
+            echo "::set-output name=has_updates::true"
+          fi
+
+      - name: Set up QEMU
+        if: steps.git_diff.outputs.has_updates == 'true'
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        if: steps.git_diff.outputs.has_updates == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.git_diff.outputs.has_updates == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        if: steps.git_diff.outputs.has_updates == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/lunatv:latest
